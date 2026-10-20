@@ -37,6 +37,9 @@ on:
         required: true
         default: 'latest'
 
+env:
+  VCPKG_ROOT: "C:\\vcpkg"
+
 jobs:
   build-windows:
     name: Build Windows
@@ -116,6 +119,12 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
+      - name: Instalar Dependencias C++ via Vcpkg (libyuv para o scrap)
+        shell: pwsh
+        run: |
+          cd C:\vcpkg
+          .\vcpkg.exe install libyuv:x64-windows-static
+
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -133,9 +142,10 @@ jobs:
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
+        env:
+          VCPKG_ROOT: "C:\\vcpkg"
         run: |
           cd ./rustdesk-source
-          # Remove o hwcodec para evitar o panico do build.rs e compila diretamente via Flutter
           python3 .\build.py --flutter
           if ($LASTEXITCODE -ne 0) {
             Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
@@ -144,7 +154,6 @@ jobs:
           
           New-Item -ItemType Directory -Force -Path "../dist"
           
-          # Localiza qualquer executavel gerado pelo compilador
           $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "target\\debug" }
           
           if ($exeFiles.Count -gt 0) {
