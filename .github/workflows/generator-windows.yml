@@ -33,12 +33,9 @@ on:
         required: false
         default: ''
       version:
-        description: 'Versao base do RustDesk (ex: latest, master ou 1.3.0)'
+        description: 'Versao base do RustDesk'
         required: true
         default: 'latest'
-
-env:
-  VCPKG_ROOT: "C:\\vcpkg"
 
 jobs:
   build-windows:
@@ -119,11 +116,13 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Instalar Dependencias C++ via Vcpkg (libyuv para o scrap)
-        shell: pwsh
+      - name: Forcar captura DXGI no Cargo (dispensa Vcpkg e libyuv)
+        shell: bash
         run: |
-          cd C:\vcpkg
-          .\vcpkg.exe install libyuv:x64-windows-static
+          cd ./rustdesk-source
+          # Configura scrap para usar directx dxgi nativo do Windows em vez de depender de libyuv externo
+          sed -i 's/features = \["dxgi"\]/features = ["dxgi"]/g' Cargo.toml || true
+          sed -i 's/scrap = { path = "libs\/scrap"/scrap = { path = "libs\/scrap", features = ["dxgi"]/g' Cargo.toml || true
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
@@ -142,11 +141,10 @@ jobs:
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
-        env:
-          VCPKG_ROOT: "C:\\vcpkg"
         run: |
           cd ./rustdesk-source
-          python3 .\build.py --flutter
+          # Compila passando dxgi para usar APIs nativas do Windows
+          python3 .\build.py --flutter -f dxgi
           if ($LASTEXITCODE -ne 0) {
             Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
             exit $LASTEXITCODE
