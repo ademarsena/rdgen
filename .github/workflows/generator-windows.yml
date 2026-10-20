@@ -32,10 +32,6 @@ on:
         description: 'Link direto da Logo (.png)'
         required: false
         default: ''
-      version:
-        description: 'Versao base do RustDesk (ex: latest ou tag especifica)'
-        required: true
-        default: 'latest'
 
 jobs:
   build-windows:
@@ -45,17 +41,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Definir e Clonar Codigo-Fonte do RustDesk
+      - name: Clonar RustDesk com Submodulos Completos
         shell: bash
         run: |
-          VER="${{ inputs.version }}"
-          if [ "$VER" = "latest" ]; then
-            echo "Buscando a versao estavel via Git..."
-            VER=$(git -c 'versionsort.suffix=-' ls-remote --tags --sort='v:refname' https://github.com/rustdesk/rustdesk.git | grep -v '\^{}' | tail -n1 | sed 's/.*\///')
-            echo "Versao latest identificada: $VER"
-          fi
-          echo "CLONE_REF=$VER" >> $GITHUB_ENV
-          git clone --depth 1 --branch "$VER" https://github.com/rustdesk/rustdesk.git ./rustdesk-source
+          git clone --recursive https://github.com/rustdesk/rustdesk.git ./rustdesk-source
 
       - name: Configurar Host, Portas e Chave no Codigo
         shell: bash
@@ -135,7 +124,7 @@ jobs:
         shell: pwsh
         run: |
           cd ./rustdesk-source
-          python3 .\build.py --flutter -f dxgi
+          python3 .\build.py --flutter
           if ($LASTEXITCODE -ne 0) {
             Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
             exit $LASTEXITCODE
