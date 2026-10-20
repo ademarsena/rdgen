@@ -135,7 +135,8 @@ jobs:
         shell: pwsh
         run: |
           cd ./rustdesk-source
-          python3 .\build.py --flutter --hwcodec
+          # Remove o hwcodec para evitar o panico do build.rs e compila diretamente via Flutter
+          python3 .\build.py --flutter
           if ($LASTEXITCODE -ne 0) {
             Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
             exit $LASTEXITCODE
@@ -150,7 +151,6 @@ jobs:
             Write-Host "Binarios encontrados:"
             $exeFiles | ForEach-Object { Write-Host " -> " $_.FullName }
             
-            # Copia os binarios e as dependencias necessarias para a pasta de distribuicao
             foreach ($exe in $exeFiles) {
               $dir = $exe.DirectoryName
               Copy-Item -Path "$dir\*" -Destination "../dist" -Recurse -Force
