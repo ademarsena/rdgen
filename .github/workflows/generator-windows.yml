@@ -33,7 +33,7 @@ on:
         required: false
         default: ''
       version:
-        description: 'Versao base do RustDesk'
+        description: 'Versao base do RustDesk (ex: latest ou tag especifica)'
         required: true
         default: 'latest'
 
@@ -50,12 +50,12 @@ jobs:
         run: |
           VER="${{ inputs.version }}"
           if [ "$VER" = "latest" ]; then
-            echo "Buscando a tag da versao mais recente no GitHub..."
-            VER=$(curl -sSL https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "Buscando a versao estavel via Git..."
+            VER=$(git -c 'versionsort.suffix=-' ls-remote --tags --sort='v:refname' https://github.com/rustdesk/rustdesk.git | grep -v '\^{}' | tail -n1 | sed 's/.*\///')
             echo "Versao latest identificada: $VER"
           fi
           echo "CLONE_REF=$VER" >> $GITHUB_ENV
-          git clone --recursive --depth 1 --branch "$VER" https://github.com/rustdesk/rustdesk.git ./rustdesk-source
+          git clone --depth 1 --branch "$VER" https://github.com/rustdesk/rustdesk.git ./rustdesk-source
 
       - name: Configurar Host, Portas e Chave no Codigo
         shell: bash
@@ -116,14 +116,6 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Forcar captura DXGI no Cargo (dispensa Vcpkg e libyuv)
-        shell: bash
-        run: |
-          cd ./rustdesk-source
-          # Configura scrap para usar directx dxgi nativo do Windows em vez de depender de libyuv externo
-          sed -i 's/features = \["dxgi"\]/features = ["dxgi"]/g' Cargo.toml || true
-          sed -i 's/scrap = { path = "libs\/scrap"/scrap = { path = "libs\/scrap", features = ["dxgi"]/g' Cargo.toml || true
-
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -143,7 +135,6 @@ jobs:
         shell: pwsh
         run: |
           cd ./rustdesk-source
-          # Compila passando dxgi para usar APIs nativas do Windows
           python3 .\build.py --flutter -f dxgi
           if ($LASTEXITCODE -ne 0) {
             Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
@@ -151,20 +142,16 @@ jobs:
           }
           
           New-Item -ItemType Directory -Force -Path "../dist"
-          
           $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "target\\debug" }
           
           if ($exeFiles.Count -gt 0) {
-            Write-Host "Binarios encontrados:"
-            $exeFiles | ForEach-Object { Write-Host " -> " $_.FullName }
-            
             foreach ($exe in $exeFiles) {
               $dir = $exe.DirectoryName
               Copy-Item -Path "$dir\*" -Destination "../dist" -Recurse -Force
               break
             }
           } else {
-            Write-Error "Nenhum executavel foi gerado durante a compilacao."
+            Write-Error "Nenhum executavel foi gerado."
             exit 1
           }
 
