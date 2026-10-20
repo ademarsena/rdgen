@@ -33,10 +33,6 @@ on:
         required: false
         default: ''
 
-env:
-  VCPKG_ROOT: "C:\\vcpkg"
-  VCPKGRS_TRIPLET: "x64-windows-static"
-
 jobs:
   build-windows:
     name: Build Windows
@@ -109,11 +105,14 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Instalar Dependencias C++ no Vcpkg (opus, libvpx, aom e libyuv)
-        shell: pwsh
+      - name: Desativar dependencias nativas C++ no scrap (Elimina Vcpkg)
+        shell: bash
         run: |
-          cd C:\vcpkg
-          .\vcpkg.exe install opus:x64-windows-static libvpx:x64-windows-static aom:x64-windows-static libyuv:x64-windows-static
+          cd ./rustdesk-source
+          # Configura o scrap para compilar sem vpx, libyuv e aom, usando a pipeline direta
+          sed -i 's/"libvpx",//g' libs/scrap/Cargo.toml || true
+          sed -i 's/"libyuv",//g' libs/scrap/Cargo.toml || true
+          sed -i 's/"aom",//g' libs/scrap/Cargo.toml || true
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
@@ -132,9 +131,6 @@ jobs:
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
-        env:
-          VCPKG_ROOT: "C:\\vcpkg"
-          VCPKGRS_TRIPLET: "x64-windows-static"
         run: |
           cd ./rustdesk-source
           python3 .\build.py --flutter
