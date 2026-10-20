@@ -33,16 +33,9 @@ on:
         required: false
         default: ''
       version:
-        description: 'Versao base do RustDesk'
+        description: 'Versao base do RustDesk (ex: latest, master ou 1.3.0)'
         required: true
-        default: '1.2.3-2'
-
-env:
-  SCITER_RUST_VERSION: "1.75"
-  RUST_VERSION: "1.75"
-  LLVM_VERSION: "15.0.6"
-  FLUTTER_VERSION: "3.24.5"
-  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+        default: 'latest'
 
 jobs:
   build-windows:
@@ -52,13 +45,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Checkout RustDesk source code
-        uses: actions/checkout@v4
-        with:
-          repository: rustdesk/rustdesk
-          ref: ${{ inputs.version }}
-          submodules: recursive
-          path: ./rustdesk-source
+      - name: Definir e Clonar Codigo-Fonte do RustDesk
+        shell: bash
+        run: |
+          VER="${{ inputs.version }}"
+          if [ "$VER" = "latest" ]; then
+            echo "Buscando a tag da versao mais recente no GitHub..."
+            VER=$(curl -sSL https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "Versao latest identificada: $VER"
+          fi
+          echo "CLONE_REF=$VER" >> $GITHUB_ENV
+          git clone --recursive --depth 1 --branch "$VER" https://github.com/rustdesk/rustdesk.git ./rustdesk-source
 
       - name: Configurar Host, Portas e Chave no Codigo
         shell: bash
@@ -70,12 +67,12 @@ jobs:
           RELAY_PORT=$((PORT + 1))
           
           # Injeta Host e Portas
-          sed -i -e "s|rs-ny.rustdesk.com|$SERVER|" ./libs/hbb_common/src/config.rs
-          sed -i -e "s|pub const RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const RENDEZVOUS_PORT: i32 = $PORT;|" ./libs/hbb_common/src/config.rs
-          sed -i -e "s|pub const RELAY_PORT: i32 = [0-9][0-9]*;|pub const RELAY_PORT: i32 = $RELAY_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|rs-ny.rustdesk.com|$SERVER|" ./libs/hbb_common/src/config.rs || true
+          sed -i -e "s|pub const RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const RENDEZVOUS_PORT: i32 = $PORT;|" ./libs/hbb_common/src/config.rs || true
+          sed -i -e "s|pub const RELAY_PORT: i32 = [0-9][0-9]*;|pub const RELAY_PORT: i32 = $RELAY_PORT;|" ./libs/hbb_common/src/config.rs || true
           
           # Injeta a Chave Publica
-          sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|$KEY|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|$KEY|" ./libs/hbb_common/src/config.rs || true
 
       - name: Customizar Links e Nome da Empresa
         shell: bash
@@ -107,39 +104,32 @@ jobs:
             Invoke-WebRequest -Uri "${{ inputs.logo_url }}" -OutFile "./flutter/assets/logo.png"
           }
 
-      - name: Desativar download quebrado de PrivacyMode
+      - name: Tratar PrivacyMode no build.py
         shell: python
         run: |
-          import re
+          import re, os
           path = "./rustdesk-source/build.py"
-          with open(path, "r", encoding="utf-8") as f:
-              content = f.read()
-          content = re.sub(r"(\s+)(?:features|feature)\.append\(['\"]PrivacyMode['\"]\)", r"\1pass", content)
-          with open(path, "w", encoding="utf-8") as f:
-              f.write(content)
+          if os.path.exists(path):
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              content = re.sub(r"(\s+)(?:features|feature)\.append\(['\"]PrivacyMode['\"]\)", r"\1pass", content)
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(content)
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
-          version: ${{ env.LLVM_VERSION }}
+          version: "15.0.6"
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
-          flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
+      - name: Install Rust (Versao Atualizada compativel com crates modernos)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
-
-      - name: Atualizar dependencias do Cargo (Corrigir reqwest)
-        shell: bash
-        run: |
-          cd ./rustdesk-source
-          cargo update -p reqwest || true
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
