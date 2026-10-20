@@ -109,11 +109,11 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Instalar Dependencia Opus no Vcpkg (Para magnum-opus)
+      - name: Instalar Dependencias C++ no Vcpkg (opus e libvpx)
         shell: pwsh
         run: |
           cd C:\vcpkg
-          .\vcpkg.exe install opus:x64-windows-static
+          .\vcpkg.exe install opus:x64-windows-static libvpx:x64-windows-static
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
