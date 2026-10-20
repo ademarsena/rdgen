@@ -1,7 +1,29 @@
 name: Custom Windows Client Generator
 run-name: Custom Windows Client Generator
 on: 
+ on:
   workflow_dispatch:
+    inputs:
+      host:
+        description: 'Host / ID Server (ex: 103.204.193.138)'
+        required: true
+        default: '103.204.193.138'
+      key:
+        description: 'Chave Publica (Key)'
+        required: true
+        default: 'NUTUmUQphDoacwhcAFFKw4fcUkSGiRnxVUn+99xG77o='
+      custom_url:
+        description: 'URL Customizada da Empresa'
+        required: false
+        default: 'https://senasystems.com.br'
+      icon_url:
+        description: 'Link direto do Icone (.png)'
+        required: false
+        default: ''
+      logo_url:
+        description: 'Link direto da Logo (.png)'
+        required: false
+        default: ''
     inputs:
       version:
         description: 'version to buld'
