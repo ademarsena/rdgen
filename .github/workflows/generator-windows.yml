@@ -108,12 +108,16 @@ jobs:
           }
 
       - name: Desativar download quebrado de PrivacyMode
-        shell: bash
+        shell: python
         run: |
-          cd ./rustdesk-source
-          # Desativa o append de PrivacyMode no build.py que causa o erro 404
-          sed -i -e "s|features\.append('PrivacyMode')|# features.append('PrivacyMode')|g" ./build.py || true
-          sed -i -e "s|feature\.append('PrivacyMode')|# feature.append('PrivacyMode')|g" ./build.py || true
+          import re
+          path = "./rustdesk-source/build.py"
+          with open(path, "r", encoding="utf-8") as f:
+              content = f.read()
+          # Substitui qualquer inclusao de PrivacyMode por pass sem quebrar a indentacao do Python
+          content = re.sub(r"(\s+)(?:features|feature)\.append\(['\"]PrivacyMode['\"]\)", r"\1pass", content)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(content)
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
