@@ -126,7 +126,7 @@ jobs:
         with:
           channel: "stable"
 
-      - name: Install Rust (Versao Atualizada compativel com crates modernos)
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -136,8 +136,30 @@ jobs:
         run: |
           cd ./rustdesk-source
           python3 .\build.py --flutter --hwcodec
-          mkdir -p ../dist
-          Move-Item -Path "./flutter/build/windows/x64/runner/Release/*" -Destination "../dist"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
+            exit $LASTEXITCODE
+          }
+          
+          New-Item -ItemType Directory -Force -Path "../dist"
+          
+          # Localiza qualquer executavel gerado pelo compilador
+          $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "target\\debug" }
+          
+          if ($exeFiles.Count -gt 0) {
+            Write-Host "Binarios encontrados:"
+            $exeFiles | ForEach-Object { Write-Host " -> " $_.FullName }
+            
+            # Copia os binarios e as dependencias necessarias para a pasta de distribuicao
+            foreach ($exe in $exeFiles) {
+              $dir = $exe.DirectoryName
+              Copy-Item -Path "$dir\*" -Destination "../dist" -Recurse -Force
+              break
+            }
+          } else {
+            Write-Error "Nenhum executavel foi gerado durante a compilacao."
+            exit 1
+          }
 
       - name: Disponibilizar Executavel para Download
         uses: actions/upload-artifact@v4
