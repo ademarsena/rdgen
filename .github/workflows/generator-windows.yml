@@ -33,6 +33,10 @@ on:
         required: false
         default: ''
 
+env:
+  VCPKG_ROOT: "C:\\vcpkg"
+  VCPKGRS_TRIPLET: "x64-windows-static"
+
 jobs:
   build-windows:
     name: Build Windows
@@ -41,10 +45,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Clonar RustDesk com Submodulos Completos
+      - name: Clonar RustDesk com Submodulos
         shell: bash
         run: |
-          git clone --recursive https://github.com/rustdesk/rustdesk.git ./rustdesk-source
+          git clone --recursive --depth 1 https://github.com/rustdesk/rustdesk.git ./rustdesk-source
 
       - name: Configurar Host, Portas e Chave no Codigo
         shell: bash
@@ -105,6 +109,12 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
+      - name: Instalar Dependencia Opus no Vcpkg (Para magnum-opus)
+        shell: pwsh
+        run: |
+          cd C:\vcpkg
+          .\vcpkg.exe install opus:x64-windows-static
+
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -122,6 +132,9 @@ jobs:
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
+        env:
+          VCPKG_ROOT: "C:\\vcpkg"
+          VCPKGRS_TRIPLET: "x64-windows-static"
         run: |
           cd ./rustdesk-source
           python3 .\build.py --flutter
