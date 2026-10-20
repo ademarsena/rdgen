@@ -107,6 +107,14 @@ jobs:
             Invoke-WebRequest -Uri "${{ inputs.logo_url }}" -OutFile "./flutter/assets/logo.png"
           }
 
+      - name: Desativar download quebrado de PrivacyMode
+        shell: bash
+        run: |
+          cd ./rustdesk-source
+          # Desativa o append de PrivacyMode no build.py que causa o erro 404
+          sed -i -e "s|features\.append('PrivacyMode')|# features.append('PrivacyMode')|g" ./build.py || true
+          sed -i -e "s|feature\.append('PrivacyMode')|# feature.append('PrivacyMode')|g" ./build.py || true
+
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -128,7 +136,7 @@ jobs:
         shell: pwsh
         run: |
           cd ./rustdesk-source
-          python3 .\build.py --flutter --hwcodec --exclude-features PrivacyMode
+          python3 .\build.py --flutter --hwcodec
           mkdir -p ../dist
           Move-Item -Path "./flutter/build/windows/x64/runner/Release/*" -Destination "../dist"
 
