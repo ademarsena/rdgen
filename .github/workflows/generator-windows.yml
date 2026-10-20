@@ -35,7 +35,7 @@ on:
       version:
         description: 'Versao base do RustDesk'
         required: true
-        default: '1.2.3'
+        default: '1.2.3-2'
 
 env:
   SCITER_RUST_VERSION: "1.75"
@@ -114,7 +114,6 @@ jobs:
           path = "./rustdesk-source/build.py"
           with open(path, "r", encoding="utf-8") as f:
               content = f.read()
-          # Substitui qualquer inclusao de PrivacyMode por pass sem quebrar a indentacao do Python
           content = re.sub(r"(\s+)(?:features|feature)\.append\(['\"]PrivacyMode['\"]\)", r"\1pass", content)
           with open(path, "w", encoding="utf-8") as f:
               f.write(content)
@@ -135,6 +134,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
+
+      - name: Atualizar dependencias do Cargo (Corrigir reqwest)
+        shell: bash
+        run: |
+          cd ./rustdesk-source
+          cargo update -p reqwest || true
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
