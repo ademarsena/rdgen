@@ -32,221 +32,274 @@ on:
         description: 'Link direto da Logo (.png)'
         required: false
         default: ''
+      rustdesk_ref:
+        description: 'Tag do RustDesk (ex: 1.4.0). Vazio = ultima tag estavel'
+        required: false
+        default: ''
 
 env:
-  VCPKG_ROOT: "C:\\vcpkg"
-  VCPKGRS_TRIPLET: "x64-windows-static"
+  VCPKG_ROOT: 'C:\vcpkg-rd'
+  VCPKGRS_TRIPLET: 'x64-windows-static'
+  VCPKG_DEFAULT_BINARY_CACHE: 'C:\vcpkg-cache'
 
 jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Clonar RustDesk com Submodulos
-        shell: bash
+      # ------------------------------------------------------------------
+      # 1. Clonar uma TAG estavel (evita quebrar com mudancas da master)
+      # ------------------------------------------------------------------
+      - name: Clonar RustDesk (tag estavel)
+        env:
+          REF_INPUT: ${{ inputs.rustdesk_ref }}
         run: |
-          git clone --recursive --depth 1 https://github.com/rustdesk/rustdesk.git ./rustdesk-source
-
-      - name: Configurar Host, Portas e Chave no Codigo
-        shell: bash
-        run: |
-          cd ./rustdesk-source
-          SERVER="${{ inputs.host }}"
-          PORT="${{ inputs.port }}"
-          KEY="${{ inputs.key }}"
-          RELAY_PORT=$((PORT + 1))
-          
-          # Injeta Host e Portas
-          sed -i -e "s|rs-ny.rustdesk.com|$SERVER|" ./libs/hbb_common/src/config.rs || true
-          sed -i -e "s|pub const RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const RENDEZVOUS_PORT: i32 = $PORT;|" ./libs/hbb_common/src/config.rs || true
-          sed -i -e "s|pub const RELAY_PORT: i32 = [0-9][0-9]*;|pub const RELAY_PORT: i32 = $RELAY_PORT;|" ./libs/hbb_common/src/config.rs || true
-          
-          # Injeta a Chave Publica
-          sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|$KEY|" ./libs/hbb_common/src/config.rs || true
-
-      - name: Customizar Links e Nome da Empresa
-        shell: bash
-        run: |
-          cd ./rustdesk-source
-          URL="${{ inputs.custom_url }}"
-          APPNAME="${{ inputs.app_name }}"
-          
-          if [ ! -z "$URL" ]; then
-            find . -name "*.dart" -exec sed -i "s|https://rustdesk.com|$URL|g" {} + || true
-            find . -name "*.rs" -exec sed -i "s|https://rustdesk.com|$URL|g" {} + || true
+          REF="$REF_INPUT"
+          if [ -z "$REF" ]; then
+            REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/rustdesk/rustdesk.git \
+              | awk '{print $2}' | sed 's|refs/tags/||' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
           fi
-          
-          if [ ! -z "$APPNAME" ]; then
-            sed -i "s|ProductName = \"RustDesk\"|ProductName = \"$APPNAME\"|g" ./Cargo.toml || true
-          fi
+          echo "Usando RustDesk tag: $REF"
+          echo "RUSTDESK_REF=$REF" >> "$GITHUB_ENV"
+          git clone --recursive --depth 1 --branch "$REF" https://github.com/rustdesk/rustdesk.git ./rustdesk-source
 
-      - name: Baixar e Aplicar Logos e Icones Customizados
-        shell: pwsh
+      # ------------------------------------------------------------------
+      # 2. Ler as versoes oficiais (Flutter, Rust, LLVM, vcpkg) da propria tag
+      # ------------------------------------------------------------------
+      - name: Ler versoes do workflow oficial
+        run: |
+          WF=./rustdesk-source/.github/workflows/flutter-build.yml
+          getv() {
+            grep -m1 -E "^\s*$1:" "$WF" | sed -E 's/^[^:]+:\s*"?([^"# ]+)"?.*/\1/'
+          }
+          FLUTTER_VERSION=$(getv FLUTTER_VERSION)
+          RUST_VERSION=$(getv RUST_VERSION)
+          LLVM_VERSION=$(getv LLVM_VERSION)
+          VCPKG_COMMIT_ID=$(getv VCPKG_COMMIT_ID)
+          FRB_VERSION=$(grep -m1 -oE 'flutter_rust_bridge_codegen --version [0-9.]+' "$WF" | awk '{print $3}')
+          FRB_VERSION=${FRB_VERSION:-1.80.1}
+          FFIGEN_VERSION=$(grep -m1 -oE 'activate ffigen --version [0-9.]+' "$WF" | awk '{print $4}')
+          FFIGEN_VERSION=${FFIGEN_VERSION:-5.0.1}
+
+          echo "Flutter=$FLUTTER_VERSION Rust=$RUST_VERSION LLVM=$LLVM_VERSION vcpkg=$VCPKG_COMMIT_ID FRB=$FRB_VERSION ffigen=$FFIGEN_VERSION"
+          for v in FLUTTER_VERSION RUST_VERSION LLVM_VERSION VCPKG_COMMIT_ID; do
+            if [ -z "${!v}" ]; then echo "ERRO: nao consegui ler $v de $WF"; exit 1; fi
+          done
+          {
+            echo "FLUTTER_VERSION=$FLUTTER_VERSION"
+            echo "RUST_VERSION=$RUST_VERSION"
+            echo "LLVM_VERSION=$LLVM_VERSION"
+            echo "VCPKG_COMMIT_ID=$VCPKG_COMMIT_ID"
+            echo "FRB_VERSION=$FRB_VERSION"
+            echo "FFIGEN_VERSION=$FFIGEN_VERSION"
+          } >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      # 3. Personalizacao (host, porta, chave, nome, links)
+      # ------------------------------------------------------------------
+      - name: Configurar Host, Portas, Chave e Nome
+        shell: python
+        env:
+          SERVER: ${{ inputs.host }}
+          PORT: ${{ inputs.port }}
+          KEY: ${{ inputs.key }}
+          APPNAME: ${{ inputs.app_name }}
+          CUSTOM_URL: ${{ inputs.custom_url }}
+        run: |
+          import os, re, pathlib
+
+          server = os.environ["SERVER"].strip()
+          port = int(os.environ["PORT"].strip())
+          relay = port + 1
+          key = os.environ["KEY"].strip()
+          appname = os.environ.get("APPNAME", "").strip()
+          url = os.environ.get("CUSTOM_URL", "").strip()
+
+          root = pathlib.Path("rustdesk-source")
+          cfg = root / "libs/hbb_common/src/config.rs"
+          txt = cfg.read_text(encoding="utf-8")
+
+          # Lista de servidores publicos -> apenas o seu
+          txt, n1 = re.subn(
+              r'(pub const RENDEZVOUS_SERVERS:\s*&\[&str\]\s*=\s*)&\[.*?\];',
+              lambda m: m.group(1) + '&["' + server + '"];',
+              txt, flags=re.S)
+          # Portas
+          txt, n2 = re.subn(r'(pub const RENDEZVOUS_PORT:\s*i32\s*=\s*)\d+;',
+                            lambda m: m.group(1) + str(port) + ';', txt)
+          txt, n3 = re.subn(r'(pub const RELAY_PORT:\s*i32\s*=\s*)\d+;',
+                            lambda m: m.group(1) + str(relay) + ';', txt)
+          # Chave publica
+          txt, n4 = re.subn(r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*";',
+                            lambda m: m.group(1) + '"' + key + '";', txt)
+          # Nome do app
+          n5 = 0
+          if appname:
+              txt, n5 = re.subn(r'(APP_NAME:\s*RwLock<String>\s*=\s*RwLock::new\()"[^"]*"',
+                                lambda m: m.group(1) + '"' + appname + '"', txt)
+          cfg.write_text(txt, encoding="utf-8")
+          print(f"servers={n1} rendezvous_port={n2} relay_port={n3} key={n4} app_name={n5}")
+          if n1 == 0 or n4 == 0:
+              raise SystemExit("ERRO: nao encontrei RENDEZVOUS_SERVERS ou RS_PUB_KEY em config.rs")
+
+          # ProductName no Cargo.toml (metadados do Windows)
+          if appname:
+              ct = root / "Cargo.toml"
+              t = ct.read_text(encoding="utf-8")
+              t = re.sub(r'(ProductName\s*=\s*)"[^"]*"', lambda m: m.group(1) + '"' + appname + '"', t)
+              t = re.sub(r'(FileDescription\s*=\s*)"[^"]*"', lambda m: m.group(1) + '"' + appname + '"', t)
+              ct.write_text(t, encoding="utf-8")
+
+          # Trocar links rustdesk.com
+          if url:
+              for ext in ("*.dart", "*.rs"):
+                  for p in root.rglob(ext):
+                      if "target" in p.parts or ".git" in p.parts:
+                          continue
+                      try:
+                          s = p.read_text(encoding="utf-8")
+                      except Exception:
+                          continue
+                      if "https://rustdesk.com" in s:
+                          p.write_text(s.replace("https://rustdesk.com", url), encoding="utf-8")
+
+      - name: Baixar e aplicar icone e logo
+        env:
+          ICON_URL: ${{ inputs.icon_url }}
+          LOGO_URL: ${{ inputs.logo_url }}
         run: |
           cd ./rustdesk-source
-          if ("${{ inputs.icon_url }}" -ne "") {
-            Invoke-WebRequest -Uri "${{ inputs.icon_url }}" -OutFile "./res/icon.png"
-            choco install -y imagemagick.app --no-progress
-            magick ./res/icon.png -define icon:auto-resize=256,128,96,64,48,32,16 ./res/icon.ico
-          }
-          if ("${{ inputs.logo_url }}" -ne "") {
-            New-Item -ItemType Directory -Force -Path "./flutter/assets"
-            Invoke-WebRequest -Uri "${{ inputs.logo_url }}" -OutFile "./flutter/assets/logo.png"
-          }
+          if [ -n "$ICON_URL" ]; then
+            curl -fsSL "$ICON_URL" -o ./res/icon.png
+            pip install pillow
+            python - <<'PY'
+          from PIL import Image
+          img = Image.open("res/icon.png").convert("RGBA")
+          sizes = [(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)]
+          img.save("res/icon.ico", format="ICO", sizes=sizes)
+          img.save("flutter/windows/runner/resources/app_icon.ico", format="ICO", sizes=sizes)
+          PY
+          fi
+          if [ -n "$LOGO_URL" ]; then
+            mkdir -p ./flutter/assets
+            curl -fsSL "$LOGO_URL" -o ./flutter/assets/logo.png
+          fi
 
-      - name: Tratar PrivacyMode no build.py
-        shell: python
-        run: |
-          import re, os
-          path = "./rustdesk-source/build.py"
-          if os.path.exists(path):
-              with open(path, "r", encoding="utf-8") as f:
-                  content = f.read()
-              content = re.sub(r"(\s+)(?:features|feature)\.append\(['\"]PrivacyMode['\"]\)", r"\1pass", content)
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(content)
+      # ------------------------------------------------------------------
+      # 4. Ferramentas
+      # ------------------------------------------------------------------
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Modulo AOM desativado por via Rust mock (sem falha Clang/C++)
-        shell: python
-        run: |
-          import os
-
-          aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
-          if os.path.exists(aom_ffi):
-              with open(aom_ffi, "w", encoding="utf-8") as f:
-                  f.write("/* aom disabled */\n")
-
-          common_mod = "./rustdesk-source/libs/scrap/src/common/mod.rs"
-          if os.path.exists(common_mod):
-              with open(common_mod, "r", encoding="utf-8") as f:
-                  txt = f.read()
-              if "pub mod aom;" not in txt:
-                  txt = txt.replace("/* pub mod aom; */", "pub mod aom;")
-              with open(common_mod, "w", encoding="utf-8") as f:
-                  f.write(txt)
-
-          aom_stub = """
-          use std::io;
-          use crate::common::codec::*;
-
-          #[derive(Debug, Clone)]
-          pub struct AomEncoderConfig {
-              pub width: usize,
-              pub height: usize,
-              pub quality: crate::codec::Quality,
-              pub keyframe_interval: Option<usize>,
-          }
-
-          pub struct Image;
-          impl Image {
-              pub fn new() -> Self { Image }
-          }
-
-          pub struct AomEncoder;
-          impl AomEncoder {
-              pub fn new(_cfg: AomEncoderConfig) -> io::Result<Self> {
-                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
-              }
-          }
-          impl EncoderApi for AomEncoder {
-              fn encode_to_message(&mut self, _frame: EncodeInput, _ms: i64) -> ResultType<crate::codec::VideoFrame> {
-                  Err(box_err!("AOM AV1 disabled"))
-              }
-              fn yuvfmt(&self) -> YuvFormat {
-                  YuvFormat::I420
-              }
-              fn set_quality(&mut self, _quality: f32) -> ResultType<()> {
-                  Ok(())
-              }
-              fn bitrate(&self) -> u32 { 0 }
-              fn support_changing_quality(&self) -> bool { false }
-              fn latency_free(&self) -> bool { true }
-              fn is_hardware(&self) -> bool { false }
-              fn disable(&self) {}
-              fn encode(&mut self, _data: &[u8], _ms: i64) -> io::Result<&[u8]> {
-                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
-              }
-          }
-
-          pub struct AomDecoder;
-          impl AomDecoder {
-              pub fn new() -> ResultType<Self> {
-                  Err(box_err!("AOM AV1 disabled"))
-              }
-          }
-          impl DecoderApi for AomDecoder {
-              fn decode(&mut self, _data: &[u8], _pic: &mut crate::common::yuv_ffi::Image) -> ResultType<crate::common::codec::DecodeResult> {
-                  Err(box_err!("AOM AV1 disabled"))
-              }
-              fn flush(&mut self) -> io::Result<std::vec::IntoIter<Vec<u8>>> {
-                  Ok(Vec::new().into_iter())
-              }
-          }
-          """
-          aom_rs = "./rustdesk-source/libs/scrap/src/common/aom.rs"
-          with open(aom_rs, "w", encoding="utf-8") as f:
-              f.write(aom_stub)
-
-      - name: Configurar Git Buffer para o Vcpkg
-        shell: bash
-        run: |
-          git config --global http.postBuffer 1048576000
-          git config --global https.postBuffer 1048576000
-          git config --global core.compression 0
-
-      - name: Instalar Dependencias C++ no Vcpkg (opus, libvpx e libyuv)
-        shell: pwsh
-        run: |
-          cd C:\vcpkg
-          .\vcpkg.exe install opus:x64-windows-static libvpx:x64-windows-static libyuv:x64-windows-static
-
-      - name: Install LLVM
+      - name: Instalar LLVM e Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
-          version: "15.0.6"
+          version: ${{ env.LLVM_VERSION }}
 
-      - name: Install Flutter
+      - name: Instalar Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: "stable"
+          channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Aplicar patches do Flutter (se aplicavel)
+        run: |
+          FLUTTER_ROOT=$(dirname "$(dirname "$(which flutter)")")
+          cd "$FLUTTER_ROOT"
+          for p in "$GITHUB_WORKSPACE"/rustdesk-source/.github/patches/*.diff; do
+            [ -f "$p" ] || continue
+            if git apply --check "$p" 2>/dev/null; then
+              echo "Aplicando $p"
+              git apply "$p"
+            else
+              echo "Ignorando $p (nao se aplica a esta versao do Flutter)"
+            fi
+          done
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
 
-      - name: Compilar Executavel RustDesk
+      - name: Cache do Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'rustdesk-source -> target'
+          key: ${{ env.RUSTDESK_REF }}
+
+      # ------------------------------------------------------------------
+      # 5. vcpkg pelo manifesto oficial (opus, libvpx, libyuv, aom, etc.)
+      # ------------------------------------------------------------------
+      - name: Cache do vcpkg
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('rustdesk-source/vcpkg.json') }}
+
+      - name: Instalar dependencias C++ (vcpkg)
         shell: pwsh
-        env:
-          VCPKG_ROOT: "C:\\vcpkg"
-          VCPKGRS_TRIPLET: "x64-windows-static"
+        run: |
+          git config --global http.postBuffer 1048576000
+          git config --global core.compression 0
+          New-Item -ItemType Directory -Force -Path C:\vcpkg-cache | Out-Null
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg-rd
+          cd C:\vcpkg-rd
+          git checkout $env:VCPKG_COMMIT_ID
+          .\bootstrap-vcpkg.bat -disableMetrics
+          cd $env:GITHUB_WORKSPACE\rustdesk-source
+          C:\vcpkg-rd\vcpkg.exe install --triplet x64-windows-static --x-install-root="C:\vcpkg-rd\installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ------------------------------------------------------------------
+      # 6. Bridge Flutter <-> Rust (obrigatorio)
+      # ------------------------------------------------------------------
+      - name: Gerar flutter_rust_bridge
         run: |
           cd ./rustdesk-source
-          python3 .\build.py --flutter
+          dart pub global activate ffigen --version "$FFIGEN_VERSION"
+          cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --features "uuid" --locked
+          (cd flutter && flutter pub get)
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+
+      # ------------------------------------------------------------------
+      # 7. Build
+      # ------------------------------------------------------------------
+      - name: Compilar RustDesk
+        shell: pwsh
+        run: |
+          cd ./rustdesk-source
+          python .\build.py --flutter
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "O script build.py falhou com codigo de saida $LASTEXITCODE."
+            Write-Error "build.py falhou com codigo $LASTEXITCODE"
             exit $LASTEXITCODE
           }
-          
-          New-Item -ItemType Directory -Force -Path "../dist"
-          $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "target\\debug" }
-          
-          if ($exeFiles.Count -gt 0) {
-            foreach ($exe in $exeFiles) {
-              $dir = $exe.DirectoryName
-              Copy-Item -Path "$dir\*" -Destination "../dist" -Recurse -Force
-              break
-            }
-          } else {
-            Write-Error "Nenhum executavel foi gerado."
+
+      - name: Reunir arquivos de saida
+        shell: pwsh
+        run: |
+          $rel = "rustdesk-source\flutter\build\windows\x64\runner\Release"
+          if (-not (Test-Path "$rel\rustdesk.exe")) {
+            Write-Error "rustdesk.exe nao encontrado em $rel"
             exit 1
           }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Path "$rel\*" -Destination dist -Recurse -Force
+          Get-ChildItem dist | Select-Object -First 30
 
-      - name: Disponibilizar Executavel para Download
+      - name: Disponibilizar para download
         uses: actions/upload-artifact@v4
         with:
           name: Suporte-SCI-Windows
-          path: ./dist/
+          path: dist/
