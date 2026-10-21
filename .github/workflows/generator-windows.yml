@@ -109,25 +109,31 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Desativar feature aom no Cargo.toml e neutralizar aom_ffi.h
+      - name: Neutralizar modulo aom no scrap (Evita unresolved import)
         shell: python
         run: |
           import os
 
-          # 1. Remove 'aom' das features ativas do scrap
-          cargo_scrap = "./rustdesk-source/libs/scrap/Cargo.toml"
-          if os.path.exists(cargo_scrap):
-              with open(cargo_scrap, "r", encoding="utf-8") as f:
-                  txt = f.read()
-              txt = txt.replace('"aom",', '').replace('"aom"', '')
-              with open(cargo_scrap, "w", encoding="utf-8") as f:
-                  f.write(txt)
-
-          # 2. Esvazia o arquivo aom_ffi.h para nao pedir aom/aom_integer.h ao Clang
+          # 1. Esvazia aom_ffi.h para nao pedir headers C++ ao Clang
           aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
           if os.path.exists(aom_ffi):
               with open(aom_ffi, "w", encoding="utf-8") as f:
                   f.write("/* aom desativado */\n")
+
+          # 2. Desativa a compilacao de aom.rs dentro de libs/scrap/src/common/mod.rs
+          common_mod = "./rustdesk-source/libs/scrap/src/common/mod.rs"
+          if os.path.exists(common_mod):
+              with open(common_mod, "r", encoding="utf-8") as f:
+                  txt = f.read()
+              txt = txt.replace("pub mod aom;", "/* pub mod aom; */")
+              with open(common_mod, "w", encoding="utf-8") as f:
+                  f.write(txt)
+
+          # 3. Fornece implementacao vazia para aom.rs caso outro modulo importe
+          aom_rs = "./rustdesk-source/libs/scrap/src/common/aom.rs"
+          if os.path.exists(aom_rs):
+              with open(aom_rs, "w", encoding="utf-8") as f:
+                  f.write("// aom dummy stub\n")
 
       - name: Configurar Git Buffer para o Vcpkg
         shell: bash
