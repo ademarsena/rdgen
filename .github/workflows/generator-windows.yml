@@ -247,6 +247,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
+          components: rustfmt
 
       - name: Cache do Rust
         uses: Swatinem/rust-cache@v2
