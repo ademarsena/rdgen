@@ -109,25 +109,25 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Desativar aom no scrap/build.rs (Elimina o erro aom_integer.h)
+      - name: Desativar feature aom no Cargo.toml e neutralizar aom_ffi.h
         shell: python
         run: |
-          import os, re
-          scrap_build = "./rustdesk-source/libs/scrap/build.rs"
-          if os.path.exists(scrap_build):
-              with open(scrap_build, "r", encoding="utf-8") as f:
-                  code = f.read()
-              
-              # Desativa a chamada de compilacao do aom_ffi.h no bindgen do build.rs
-              code = re.sub(r'gen_binding\s*\(\s*"aom"\s*,\s*&include_path\s*,\s*&out_dir\s*\);', '// gen_binding("aom", &include_path, &out_dir);', code)
-              code = re.sub(r'if\s+cfg!\(feature\s*=\s*"aom"\s*\)\s*\{[^}]*\}', '', code)
-              
-              # Garante que cria um dummy aom_ffi.rs caso algum arquivo faca include
-              dummy_snippet = '\n    let out_aom = std::path::Path::new(&out_dir).join("aom_ffi.rs");\n    if !out_aom.exists() { std::fs::write(&out_aom, "// dummy aom").unwrap(); }\n'
-              code = code.replace('fn main() {', 'fn main() {' + dummy_snippet)
-              
-              with open(scrap_build, "w", encoding="utf-8") as f:
-                  f.write(code)
+          import os
+
+          # 1. Remove 'aom' das features ativas do scrap
+          cargo_scrap = "./rustdesk-source/libs/scrap/Cargo.toml"
+          if os.path.exists(cargo_scrap):
+              with open(cargo_scrap, "r", encoding="utf-8") as f:
+                  txt = f.read()
+              txt = txt.replace('"aom",', '').replace('"aom"', '')
+              with open(cargo_scrap, "w", encoding="utf-8") as f:
+                  f.write(txt)
+
+          # 2. Esvazia o arquivo aom_ffi.h para nao pedir aom/aom_integer.h ao Clang
+          aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
+          if os.path.exists(aom_ffi):
+              with open(aom_ffi, "w", encoding="utf-8") as f:
+                  f.write("/* aom desativado */\n")
 
       - name: Configurar Git Buffer para o Vcpkg
         shell: bash
