@@ -109,7 +109,7 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Configurar Git Buffer para downloads do Vcpkg
+      - name: Configurar Git Buffer para o Vcpkg
         shell: bash
         run: |
           git config --global http.postBuffer 1048576000
@@ -120,20 +120,23 @@ jobs:
         shell: pwsh
         run: |
           cd C:\vcpkg
-          # Instala pacotes leves essenciais que geram os bindings sem depender do git clone do aom
           .\vcpkg.exe install opus:x64-windows-static libvpx:x64-windows-static libyuv:x64-windows-static
 
-      - name: Criar mock do cabeçalho aom (evita download quebrado do googlesource)
+      - name: Gerar headers mock do aom para Clang e Bindgen
         shell: pwsh
         run: |
           $includePath = "C:\vcpkg\installed\x64-windows-static\include\aom"
           New-Item -ItemType Directory -Force -Path $includePath
-          Set-Content -Path "$includePath\aom.h" -Value "#pragma once`n#define AOM_CODEC_OK 0"
-          Set-Content -Path "$includePath\aom_image.h" -Value "#pragma once"
-          Set-Content -Path "$includePath\aom_encoder.h" -Value "#pragma once"
-          Set-Content -Path "$includePath\aom_decoder.h" -Value "#pragma once"
           
-          # Cria arquivo de biblioteca dummy caso o linker solicite aom.lib
+          # Headers exigidos pelo scrap/src/bindings/aom_ffi.h
+          Set-Content -Path "$includePath\aom.h" -Value "#pragma once`n#include <stdint.h>`n#define AOM_CODEC_OK 0"
+          Set-Content -Path "$includePath\aom_integer.h" -Value "#pragma once`n#include <stdint.h>`n#include <stddef.h>"
+          Set-Content -Path "$includePath\aom_image.h" -Value "#pragma once`n#include <stdint.h>`ntypedef struct aom_image { int dummy; } aom_image_t;"
+          Set-Content -Path "$includePath\aom_codec.h" -Value "#pragma once`n#include <stdint.h>`ntypedef int aom_codec_err_t;`ntypedef struct aom_codec_ctx { int dummy; } aom_codec_ctx_t;"
+          Set-Content -Path "$includePath\aom_encoder.h" -Value "#pragma once`n#include <stdint.h>`ntypedef struct aom_codec_enc_cfg { int dummy; } aom_codec_enc_cfg_t;"
+          Set-Content -Path "$includePath\aom_decoder.h" -Value "#pragma once`n#include <stdint.h>`ntypedef struct aom_codec_dec_cfg { int dummy; } aom_codec_dec_cfg_t;"
+          Set-Content -Path "$includePath\aom_frame_buffer.h" -Value "#pragma once`n#include <stdint.h>"
+          
           $libPath = "C:\vcpkg\installed\x64-windows-static\lib"
           if (!(Test-Path "$libPath\aom.lib")) {
             Copy-Item "$libPath\vpx.lib" "$libPath\aom.lib" -ErrorAction SilentlyContinue
@@ -168,11 +171,11 @@ jobs:
           }
           
           New-Item -ItemType Directory -Force -Path "../dist"
-          $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "target\\debug" }
+          $exeFiles = Get-ChildItem -Path . -Filter "*.exe" -Recurse \vert{} Where-Object { $_.FullName -notmatch "target\\debug" }
           
           if ($exeFiles.Count -gt 0) {
-            foreach ($exe in $exeFiles) {
-              $dir = $exe.DirectoryName
+            foreach ($exe in$exeFiles) {
+              $dir =$exe.DirectoryName
               Copy-Item -Path "$dir\*" -Destination "../dist" -Recurse -Force
               break
             }
