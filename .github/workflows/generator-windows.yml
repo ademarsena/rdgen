@@ -109,18 +109,18 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Mock Rust para modulo aom (Neutraliza Clang e resolve imports do codec.rs)
+      - name: Substituir aom.rs por mock Rust de compatibilidade total
         shell: python
         run: |
           import os
 
-          # 1. Esvazia o arquivo C++ aom_ffi.h para o Clang/Bindgen nao buscar headers da biblioteca
+          # 1. Esvazia o arquivo C++ aom_ffi.h para o Clang/Bindgen nao buscar headers
           aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
           if os.path.exists(aom_ffi):
               with open(aom_ffi, "w", encoding="utf-8") as f:
                   f.write("/* aom disabled */\n")
 
-          # 2. Garante que pub mod aom; permaneca ativo no common/mod.rs para satisfazer o codec.rs
+          # 2. Garante que pub mod aom; permaneca ativo no common/mod.rs
           common_mod = "./rustdesk-source/libs/scrap/src/common/mod.rs"
           if os.path.exists(common_mod):
               with open(common_mod, "r", encoding="utf-8") as f:
@@ -130,25 +130,35 @@ jobs:
               with open(common_mod, "w", encoding="utf-8") as f:
                   f.write(txt)
 
-          # 3. Substitui o aom.rs pelas definicoes esperadas por libs/scrap/src/common/codec.rs
+          # 3. Substitui o aom.rs pelas definicoes precisas mapeadas pelo compilador
           aom_stub = """
           use std::io;
 
           #[derive(Debug, Clone)]
           pub struct AomEncoderConfig {
-              pub width: usize,
-              pub height: usize,
-              pub quality: crate::codec::Quality,
+              pub width: u32,
+              pub height: u32,
+              pub quality: f32,
               pub keyframe_interval: Option<usize>,
+          }
+
+          pub struct Image;
+          impl Image {
+              pub fn new() -> Self { Image }
           }
 
           pub struct AomEncoder;
           impl AomEncoder {
-              pub fn new(_config: AomEncoderConfig) -> io::Result<Self> {
+              pub fn new(_cfg: crate::common::codec::EncoderCfg, _i444: bool) -> io::Result<Self> {
                   Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
               }
-              pub fn encode(&mut self, _data: &[u8], _ms: i64) -> io::Result<&[u8]> {
+          }
+          impl crate::common::codec::EncoderApi for AomEncoder {
+              fn encode(&mut self, _ms: i64, _data: &[u8], _stride: usize) -> io::Result<&[u8]> {
                   Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+              fn yuvfmt(&self) -> crate::common::codec::YuvFormat {
+                  crate::common::codec::YuvFormat::I420
               }
           }
 
@@ -157,8 +167,13 @@ jobs:
               pub fn new() -> io::Result<Self> {
                   Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
               }
-              pub fn decode(&mut self, _data: &[u8]) -> io::Result<Vec<u8>> {
+          }
+          impl crate::common::codec::DecoderApi for AomDecoder {
+              fn decode(&mut self, _data: &[u8]) -> io::Result<Vec<u8>> {
                   Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+              fn flush(&mut self) -> io::Result<std::vec::IntoIter<Vec<u8>>> {
+                  Ok(Vec::new().into_iter())
               }
           }
           """
