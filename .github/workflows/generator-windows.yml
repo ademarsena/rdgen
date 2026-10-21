@@ -33,6 +33,10 @@ on:
         required: false
         default: ''
 
+env:
+  VCPKG_ROOT: "C:\\vcpkg"
+  VCPKGRS_TRIPLET: "x64-windows-static"
+
 jobs:
   build-windows:
     name: Build Windows
@@ -105,14 +109,20 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Desativar dependencias nativas C++ no scrap (Elimina Vcpkg)
-        shell: bash
+      - name: Neutralizar verificacao de VCPKG no scrap (Modo DXGI nativo)
+        shell: python
         run: |
-          cd ./rustdesk-source
-          # Configura o scrap para compilar sem vpx, libyuv e aom, usando a pipeline direta
-          sed -i 's/"libvpx",//g' libs/scrap/Cargo.toml || true
-          sed -i 's/"libyuv",//g' libs/scrap/Cargo.toml || true
-          sed -i 's/"aom",//g' libs/scrap/Cargo.toml || true
+          import os
+          path = "./rustdesk-source/libs/scrap/build.rs"
+          if os.path.exists(path):
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write('fn main() {\n    println!("cargo:rustc-cfg=dxgi");\n}\n')
+
+      - name: Instalar apenas o pacote Opus no Vcpkg (Leve e estavel)
+        shell: pwsh
+        run: |
+          cd C:\vcpkg
+          .\vcpkg.exe install opus:x64-windows-static
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
@@ -131,6 +141,9 @@ jobs:
 
       - name: Compilar Executavel RustDesk
         shell: pwsh
+        env:
+          VCPKG_ROOT: "C:\\vcpkg"
+          VCPKGRS_TRIPLET: "x64-windows-static"
         run: |
           cd ./rustdesk-source
           python3 .\build.py --flutter
