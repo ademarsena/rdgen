@@ -73,23 +73,41 @@ jobs:
       # ------------------------------------------------------------------
       - name: Ler versoes do workflow oficial
         run: |
-          WF=./rustdesk-source/.github/workflows/flutter-build.yml
+          set +e +o pipefail
+          cd ./rustdesk-source
+          WF=.github/workflows/flutter-build.yml
+          echo "Arquivo existe? $(test -f $WF && echo sim || echo NAO)"
+          echo "--- linhas de versao encontradas no workflow oficial ---"
+          grep -nE '(FLUTTER_VERSION|RUST_VERSION|LLVM_VERSION|VCPKG_COMMIT_ID|flutter_rust_bridge_codegen --version|ffigen --version):?' "$WF" | head -n 30
+
           getv() {
-            grep -m1 -E "^\s*$1:" "$WF" | sed -E 's/^[^:]+:\s*"?([^"# ]+)"?.*/\1/'
+            grep -m1 -E "^\s*$1:" "$WF" 2>/dev/null | sed -E 's/^[^:]+:\s*"?([^"# ]+)"?.*/\1/'
           }
-          FLUTTER_VERSION=$(getv FLUTTER_VERSION)
+
+          FLUTTER_VERSION=$(getv WINDOWS_FLUTTER_VERSION)
+          [ -z "$FLUTTER_VERSION" ] && FLUTTER_VERSION=$(getv FLUTTER_VERSION)
           RUST_VERSION=$(getv RUST_VERSION)
           LLVM_VERSION=$(getv LLVM_VERSION)
           VCPKG_COMMIT_ID=$(getv VCPKG_COMMIT_ID)
-          FRB_VERSION=$(grep -m1 -oE 'flutter_rust_bridge_codegen --version [0-9.]+' "$WF" | awk '{print $3}')
+          [ -z "$VCPKG_COMMIT_ID" ] && VCPKG_COMMIT_ID=$(grep -m1 -oE '"builtin-baseline"\s*:\s*"[0-9a-f]+"' vcpkg.json 2>/dev/null | grep -oE '[0-9a-f]{40}')
+          FRB_VERSION=$(grep -m1 -oE 'flutter_rust_bridge_codegen --version [0-9.]+' "$WF" 2>/dev/null | awk '{print $3}')
+          FFIGEN_VERSION=$(grep -m1 -oE 'activate ffigen --version [0-9.]+' "$WF" 2>/dev/null | awk '{print $4}')
+
+          # Valores de reserva
+          FLUTTER_VERSION=${FLUTTER_VERSION:-3.24.5}
+          RUST_VERSION=${RUST_VERSION:-1.75}
+          LLVM_VERSION=${LLVM_VERSION:-15.0.6}
           FRB_VERSION=${FRB_VERSION:-1.80.1}
-          FFIGEN_VERSION=$(grep -m1 -oE 'activate ffigen --version [0-9.]+' "$WF" | awk '{print $4}')
           FFIGEN_VERSION=${FFIGEN_VERSION:-5.0.1}
 
-          echo "Flutter=$FLUTTER_VERSION Rust=$RUST_VERSION LLVM=$LLVM_VERSION vcpkg=$VCPKG_COMMIT_ID FRB=$FRB_VERSION ffigen=$FFIGEN_VERSION"
-          for v in FLUTTER_VERSION RUST_VERSION LLVM_VERSION VCPKG_COMMIT_ID; do
-            if [ -z "${!v}" ]; then echo "ERRO: nao consegui ler $v de $WF"; exit 1; fi
-          done
+          echo "=== Versoes usadas ==="
+          echo "Flutter=$FLUTTER_VERSION Rust=$RUST_VERSION LLVM=$LLVM_VERSION"
+          echo "vcpkg=$VCPKG_COMMIT_ID FRB=$FRB_VERSION ffigen=$FFIGEN_VERSION"
+
+          if [ -z "$VCPKG_COMMIT_ID" ]; then
+            echo "ERRO: nao encontrei o commit do vcpkg (nem no workflow, nem em vcpkg.json)"
+            exit 1
+          fi
           {
             echo "FLUTTER_VERSION=$FLUTTER_VERSION"
             echo "RUST_VERSION=$RUST_VERSION"
