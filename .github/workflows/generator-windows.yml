@@ -109,20 +109,35 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Neutralizar verificacao de VCPKG no scrap (Modo DXGI nativo)
-        shell: python
+      - name: Configurar Git Buffer para downloads do Vcpkg
+        shell: bash
         run: |
-          import os
-          path = "./rustdesk-source/libs/scrap/build.rs"
-          if os.path.exists(path):
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write('fn main() {\n    println!("cargo:rustc-cfg=dxgi");\n}\n')
+          git config --global http.postBuffer 1048576000
+          git config --global https.postBuffer 1048576000
+          git config --global core.compression 0
 
-      - name: Instalar apenas o pacote Opus no Vcpkg (Leve e estavel)
+      - name: Instalar Dependencias C++ no Vcpkg (opus, libvpx e libyuv)
         shell: pwsh
         run: |
           cd C:\vcpkg
-          .\vcpkg.exe install opus:x64-windows-static
+          # Instala pacotes leves essenciais que geram os bindings sem depender do git clone do aom
+          .\vcpkg.exe install opus:x64-windows-static libvpx:x64-windows-static libyuv:x64-windows-static
+
+      - name: Criar mock do cabeçalho aom (evita download quebrado do googlesource)
+        shell: pwsh
+        run: |
+          $includePath = "C:\vcpkg\installed\x64-windows-static\include\aom"
+          New-Item -ItemType Directory -Force -Path $includePath
+          Set-Content -Path "$includePath\aom.h" -Value "#pragma once`n#define AOM_CODEC_OK 0"
+          Set-Content -Path "$includePath\aom_image.h" -Value "#pragma once"
+          Set-Content -Path "$includePath\aom_encoder.h" -Value "#pragma once"
+          Set-Content -Path "$includePath\aom_decoder.h" -Value "#pragma once"
+          
+          # Cria arquivo de biblioteca dummy caso o linker solicite aom.lib
+          $libPath = "C:\vcpkg\installed\x64-windows-static\lib"
+          if (!(Test-Path "$libPath\aom.lib")) {
+            Copy-Item "$libPath\vpx.lib" "$libPath\aom.lib" -ErrorAction SilentlyContinue
+          }
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
