@@ -109,31 +109,62 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Neutralizar modulo aom no scrap (Evita erro de Clang e imports)
+      - name: Mock Rust para modulo aom (Neutraliza Clang e resolve imports do codec.rs)
         shell: python
         run: |
           import os
 
-          # 1. Esvazia aom_ffi.h para nao pedir headers C++ ao Clang
+          # 1. Esvazia o arquivo C++ aom_ffi.h para o Clang/Bindgen nao buscar headers da biblioteca
           aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
           if os.path.exists(aom_ffi):
               with open(aom_ffi, "w", encoding="utf-8") as f:
-                  f.write("/* aom desativado */\n")
+                  f.write("/* aom disabled */\n")
 
-          # 2. Desativa modulo aom em libs/scrap/src/common/mod.rs
+          # 2. Garante que pub mod aom; permaneca ativo no common/mod.rs para satisfazer o codec.rs
           common_mod = "./rustdesk-source/libs/scrap/src/common/mod.rs"
           if os.path.exists(common_mod):
               with open(common_mod, "r", encoding="utf-8") as f:
                   txt = f.read()
-              txt = txt.replace("pub mod aom;", "/* pub mod aom; */")
+              if "pub mod aom;" not in txt:
+                  txt = txt.replace("/* pub mod aom; */", "pub mod aom;")
               with open(common_mod, "w", encoding="utf-8") as f:
                   f.write(txt)
 
-          # 3. Fornece stub vazio para aom.rs
+          # 3. Substitui o aom.rs pelas definicoes esperadas por libs/scrap/src/common/codec.rs
+          aom_stub = """
+          use std::io;
+
+          #[derive(Debug, Clone)]
+          pub struct AomEncoderConfig {
+              pub width: usize,
+              pub height: usize,
+              pub quality: crate::codec::Quality,
+              pub keyframe_interval: Option<usize>,
+          }
+
+          pub struct AomEncoder;
+          impl AomEncoder {
+              pub fn new(_config: AomEncoderConfig) -> io::Result<Self> {
+                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+              pub fn encode(&mut self, _data: &[u8], _ms: i64) -> io::Result<&[u8]> {
+                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+          }
+
+          pub struct AomDecoder;
+          impl AomDecoder {
+              pub fn new() -> io::Result<Self> {
+                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+              pub fn decode(&mut self, _data: &[u8]) -> io::Result<Vec<u8>> {
+                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              }
+          }
+          """
           aom_rs = "./rustdesk-source/libs/scrap/src/common/aom.rs"
-          if os.path.exists(aom_rs):
-              with open(aom_rs, "w", encoding="utf-8") as f:
-                  f.write("// aom dummy stub\n")
+          with open(aom_rs, "w", encoding="utf-8") as f:
+              f.write(aom_stub)
 
       - name: Configurar Git Buffer para o Vcpkg
         shell: bash
