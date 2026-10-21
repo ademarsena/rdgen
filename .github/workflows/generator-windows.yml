@@ -109,18 +109,16 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-      - name: Substituir aom.rs por mock Rust de compatibilidade total
+      - name: Modulo AOM desativado por via Rust mock (sem falha Clang/C++)
         shell: python
         run: |
           import os
 
-          # 1. Esvazia o arquivo C++ aom_ffi.h para o Clang/Bindgen nao buscar headers
           aom_ffi = "./rustdesk-source/libs/scrap/src/bindings/aom_ffi.h"
           if os.path.exists(aom_ffi):
               with open(aom_ffi, "w", encoding="utf-8") as f:
                   f.write("/* aom disabled */\n")
 
-          # 2. Garante que pub mod aom; permaneca ativo no common/mod.rs
           common_mod = "./rustdesk-source/libs/scrap/src/common/mod.rs"
           if os.path.exists(common_mod):
               with open(common_mod, "r", encoding="utf-8") as f:
@@ -130,15 +128,15 @@ jobs:
               with open(common_mod, "w", encoding="utf-8") as f:
                   f.write(txt)
 
-          # 3. Substitui o aom.rs pelas definicoes precisas mapeadas pelo compilador
           aom_stub = """
           use std::io;
+          use crate::common::codec::*;
 
           #[derive(Debug, Clone)]
           pub struct AomEncoderConfig {
-              pub width: u32,
-              pub height: u32,
-              pub quality: f32,
+              pub width: usize,
+              pub height: usize,
+              pub quality: crate::codec::Quality,
               pub keyframe_interval: Option<usize>,
           }
 
@@ -149,28 +147,39 @@ jobs:
 
           pub struct AomEncoder;
           impl AomEncoder {
-              pub fn new(_cfg: crate::common::codec::EncoderCfg, _i444: bool) -> io::Result<Self> {
+              pub fn new(_cfg: AomEncoderConfig) -> io::Result<Self> {
                   Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
               }
           }
-          impl crate::common::codec::EncoderApi for AomEncoder {
-              fn encode(&mut self, _ms: i64, _data: &[u8], _stride: usize) -> io::Result<&[u8]> {
-                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+          impl EncoderApi for AomEncoder {
+              fn encode_to_message(&mut self, _frame: EncodeInput, _ms: i64) -> ResultType<crate::codec::VideoFrame> {
+                  Err(box_err!("AOM AV1 disabled"))
               }
-              fn yuvfmt(&self) -> crate::common::codec::YuvFormat {
-                  crate::common::codec::YuvFormat::I420
+              fn yuvfmt(&self) -> YuvFormat {
+                  YuvFormat::I420
+              }
+              fn set_quality(&mut self, _quality: f32) -> ResultType<()> {
+                  Ok(())
+              }
+              fn bitrate(&self) -> u32 { 0 }
+              fn support_changing_quality(&self) -> bool { false }
+              fn latency_free(&self) -> bool { true }
+              fn is_hardware(&self) -> bool { false }
+              fn disable(&self) {}
+              fn encode(&mut self, _data: &[u8], _ms: i64) -> io::Result<&[u8]> {
+                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
               }
           }
 
           pub struct AomDecoder;
           impl AomDecoder {
-              pub fn new() -> io::Result<Self> {
-                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+              pub fn new() -> ResultType<Self> {
+                  Err(box_err!("AOM AV1 disabled"))
               }
           }
-          impl crate::common::codec::DecoderApi for AomDecoder {
-              fn decode(&mut self, _data: &[u8]) -> io::Result<Vec<u8>> {
-                  Err(io::Error::new(io::ErrorKind::Unsupported, "AOM AV1 disabled"))
+          impl DecoderApi for AomDecoder {
+              fn decode(&mut self, _data: &[u8], _pic: &mut crate::common::yuv_ffi::Image) -> ResultType<crate::common::codec::DecodeResult> {
+                  Err(box_err!("AOM AV1 disabled"))
               }
               fn flush(&mut self) -> io::Result<std::vec::IntoIter<Vec<u8>>> {
                   Ok(Vec::new().into_iter())
